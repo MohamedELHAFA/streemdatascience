@@ -17,6 +17,11 @@ models/
 *.onnx
 *.h5
 
+results/
+*.png
+.json
+.csv
+
 # ── Python virtual environment ───────────────────────
 venv/
 .venv/
