@@ -1,24 +1,26 @@
-# ── Core ─────────────────────────────────────────────
-numpy==1.26.4
-pandas==2.2.2
-scikit-learn==1.4.2
+# Data
+pandas>=2.0
+numpy>=1.26
+scikit-learn>=1.4
 
-# ── ML / DL ──────────────────────────────────────────
-xgboost==2.0.3
-lightgbm==4.3.0
-torch==2.3.0
+# Visualisation
+matplotlib>=3.8
+seaborn>=0.13
 
-# ── Explainability ───────────────────────────────────
-shap==0.45.0
+# Modélisation
+xgboost>=2.0
+# lightgbm>=4.0  (optionnel)
 
-# ── Visualization ────────────────────────────────────
-matplotlib==3.8.4
-seaborn==0.13.2
-plotly==5.22.0
+# Deep Learning
+# tensorflow>=2.15  ou  torch>=2.2
 
-# ── Dashboard ────────────────────────────────────────
-streamlit==1.35.0
+# Notebook (dev uniquement)
+jupyter
+ipykernel
 
-# ── Utilities ────────────────────────────────────────
-joblib==1.4.2
-python-dotenv==1.0.1
+# API (optionnel)
+fastapi
+uvicorn
+
+# Dashboard (optionnel)
+streamlit
