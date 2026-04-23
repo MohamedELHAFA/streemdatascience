@@ -466,6 +466,22 @@ def run_shap_analysis(model_path: Path = MODEL_PATH,
     return shap_df, feature_names
 
 
+# ─── Alias pour compatibilité main.py ────────────────────────────────────────
+
+def run_full_analysis(model_path: str, data_path: str,
+                      results_dir: str, sample_obs: int = 0):
+    """
+    Alias de run_shap_analysis pour appel depuis main.py.
+    Accepte des str en plus de Path.
+    """
+    return run_shap_analysis(
+        model_path=Path(model_path),
+        data_path=Path(data_path),
+        results_dir=Path(results_dir),
+        sample_obs=sample_obs,
+    )
+
+
 # ─── Point d'entrée ───────────────────────────────────────────────────────────
 
 if __name__ == "__main__":

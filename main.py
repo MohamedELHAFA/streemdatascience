@@ -29,12 +29,14 @@ import json
 from pathlib import Path
 import pandas as pd
 
+import matplotlib
+matplotlib.use('Agg')  # backend non-interactif — avant tout import pyplot
+
 # ─── Imports locaux ───────────────────────────────────────────────────────────
 from src.preprocessing import load_and_split, build_preprocessor
 from src import model_logistic, model_random_forest, model_xgboost, model_mlp
 from src.evaluation import plot_comparison_table
-import matplotlib
-matplotlib.use('Agg')  # backend non-interactif, pas de fenêtre
+from src.minio_loader import MinIOClient
 
 # ─── Chemins ──────────────────────────────────────────────────────────────────
 
@@ -42,8 +44,9 @@ ROOT         = Path(__file__).parent
 DATA_PATH    = ROOT / "data" / "raw" / "predictive_maintenance_v3.csv"
 MODELS_DIR   = ROOT / "models"
 RESULTS_DIR  = ROOT / "results"
-MODELS_DIR.mkdir(exist_ok=True)
-RESULTS_DIR.mkdir(exist_ok=True)
+MODELS_DIR.mkdir(parents=True, exist_ok=True)
+RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+(ROOT / "data" / "raw").mkdir(parents=True, exist_ok=True)
 
 
 # ─── Pipeline complet pour un modèle ─────────────────────────────────────────
@@ -178,6 +181,18 @@ def main():
         "--data", type=str, default=str(DATA_PATH),
         help="Chemin vers le CSV"
     )
+    parser.add_argument(
+        "--from-minio", action="store_true",
+        help="Charger le dataset depuis MinIO (critère RNCP C3)"
+    )
+    parser.add_argument(
+        "--shap", action="store_true",
+        help="Générer les graphiques SHAP après entraînement"
+    )
+    parser.add_argument(
+        "--upload-minio", action="store_true",
+        help="Uploader modèles et résultats vers MinIO après entraînement"
+    )
     args = parser.parse_args()
 
     run_cv = not args.no_cv
@@ -191,7 +206,21 @@ def main():
     print(f"  Données      : {args.data}")
 
     # ── Chargement & split ──
-    X_train, X_test, y_train, y_test, preprocessor = load_and_split(args.data)
+    data_path = args.data
+
+    if args.from_minio:
+        print("\n[MinIO] Tentative de chargement depuis MinIO...")
+        minio = MinIOClient()
+        df_minio = minio.load_dataset_to_df(local_fallback=data_path)
+        if df_minio is not None:
+            # Sauvegarder localement pour load_and_split
+            Path(data_path).parent.mkdir(parents=True, exist_ok=True)
+            df_minio.to_csv(data_path, index=False)
+            print(f"[MinIO] Dataset sauvegardé localement : {data_path}")
+        else:
+            print("[MinIO] Échec MinIO — utilisation fichier local.")
+
+    X_train, X_test, y_train, y_test, preprocessor = load_and_split(data_path)
 
     all_metrics = []
     model_choice = args.model
@@ -237,9 +266,39 @@ def main():
 
         # Recommandation automatique
         best = df_final["pr_auc"].idxmax()
-        print(f"\n🏆 Meilleur modèle (PR-AUC) : {best}")
+        print(f"\n[Résultat] Meilleur modèle (PR-AUC) : {best}")
         print("   → Recommandé pour le déploiement en production")
         print("   → Vérifier aussi Recall et interprétabilité avant décision finale")
+
+    # ── SHAP (explicabilité) ──
+    if args.shap and (MODELS_DIR / "xgboost.pkl").exists():
+        print("\n" + "=" * 60)
+        print("  ANALYSE SHAP — EXPLICABILITÉ")
+        print("=" * 60)
+        try:
+            from src.explainability import run_full_analysis
+            run_full_analysis(
+                model_path=str(MODELS_DIR / "xgboost.pkl"),
+                data_path=data_path,
+                results_dir=str(RESULTS_DIR),
+            )
+        except ImportError:
+            import subprocess, sys
+            subprocess.run([sys.executable, "src/explainability.py",
+                            "--model", str(MODELS_DIR / "xgboost.pkl"),
+                            "--data", str(data_path)], check=False)
+
+    # ── Upload MinIO ──
+    if args.upload_minio:
+        print("\n" + "=" * 60)
+        print("  UPLOAD MINIO — CLOUD DATA MANAGEMENT")
+        print("=" * 60)
+        minio = MinIOClient()
+        minio.upload_dataset(data_path)
+        minio.upload_all_models(MODELS_DIR)
+        minio.upload_results(RESULTS_DIR)
+        print("[MinIO] Upload complet.")
+        print(json.dumps(minio.status(), indent=2))
 
 
 if __name__ == "__main__":
