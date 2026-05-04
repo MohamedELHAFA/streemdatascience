@@ -1,0 +1,47 @@
+# Cache Python
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache
+.mypy_cache
+
+# Environnements virtuels
+.venv
+venv
+env
+maintenance_failure_venv
+
+# Données et modèles (montés via volumes)
+data/raw/*.csv
+data/processed/
+models/*.pkl
+models/*.joblib
+results/
+
+# IDE
+.idea
+.vscode
+*.swp
+
+# Git
+.git
+.gitignore
+.github
+
+# Secrets
+.env
+.env.*
+
+# Notebooks
+.ipynb_checkpoints
+
+# Docs
+README.md
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Misc
+tips.txt

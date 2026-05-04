@@ -1,0 +1,137 @@
+# ============================================================
+# docker-compose.yml — Stack Maintenance Prédictive
+# ✅ PORTABLE : compatible Docker ET Podman (Linux/Mac/Windows)
+# ============================================================
+#
+# Pour Podman/Fedora avec SELinux : utiliser en plus le fichier
+#   docker-compose.podman.yml (voir README)
+# ============================================================
+
+services:
+
+  # ----------------------------------------------------------
+  # 1) MinIO — Stockage S3-compatible PERSISTANT
+  # ----------------------------------------------------------
+  minio:
+    image: quay.io/minio/minio:latest
+    container_name: minio
+    ports:
+      - "9000:9000"   # API S3
+      - "9001:9001"   # Console web
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+    volumes:
+      - minio_data:/data
+    command: server /data --console-address ":9001"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    restart: unless-stopped
+
+  # ----------------------------------------------------------
+  # 2) createbuckets — Création auto du bucket
+  # ----------------------------------------------------------
+  createbuckets:
+    image: minio/mc:latest
+    container_name: minio_createbuckets
+    depends_on:
+      - minio
+    entrypoint: >
+      /bin/sh -c "
+      sleep 8;
+      mc alias set local http://minio:9000 ${MINIO_ROOT_USER} ${MINIO_ROOT_PASSWORD};
+      mc mb --ignore-existing local/${MINIO_BUCKET};
+      echo '[OK] Bucket ${MINIO_BUCKET} prêt';
+      exit 0;
+      "
+
+  # ----------------------------------------------------------
+  # 3) training — Entraînement (one-shot, profile dédié)
+  # ----------------------------------------------------------
+  training:
+    build: .
+    image: maintenance-ml:latest
+    container_name: ml_training
+    depends_on:
+      - minio
+      - createbuckets
+    environment:
+      MINIO_ENDPOINT: minio:9000
+      MINIO_ACCESS_KEY: ${MINIO_ROOT_USER}
+      MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD}
+      MINIO_BUCKET: ${MINIO_BUCKET}
+      MINIO_SECURE: "false"
+    volumes:
+      - ./data:/app/data
+      - ./models:/app/models
+      - ./results:/app/results
+    command: ["python", "main.py", "--shap", "--upload-minio"]
+    profiles: ["training"]
+
+  # ----------------------------------------------------------
+  # 4) dashboard — Streamlit (EF4)
+  # ----------------------------------------------------------
+  dashboard:
+    build: .
+    image: maintenance-ml:latest
+    container_name: ml_dashboard
+    depends_on:
+      - minio
+      - createbuckets
+    ports:
+      - "8501:8501"
+    environment:
+      MINIO_ENDPOINT: minio:9000
+      MINIO_ACCESS_KEY: ${MINIO_ROOT_USER}
+      MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD}
+      MINIO_BUCKET: ${MINIO_BUCKET}
+      MINIO_SECURE: "false"
+    volumes:
+      - ./models:/app/models:ro
+      - ./results:/app/results:ro
+    command:
+      - "streamlit"
+      - "run"
+      - "dashboard/app.py"
+      - "--server.address=0.0.0.0"
+      - "--server.port=8501"
+      - "--server.headless=true"
+    restart: unless-stopped
+
+  # ----------------------------------------------------------
+  # 5) api — FastAPI (EF5)
+  # ----------------------------------------------------------
+  api:
+    build: .
+    image: maintenance-ml:latest
+    container_name: ml_api
+    depends_on:
+      - minio
+      - createbuckets
+    ports:
+      - "8000:8000"
+    environment:
+      MINIO_ENDPOINT: minio:9000
+      MINIO_ACCESS_KEY: ${MINIO_ROOT_USER}
+      MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD}
+      MINIO_BUCKET: ${MINIO_BUCKET}
+      MINIO_SECURE: "false"
+    volumes:
+      - ./models:/app/models:ro
+    command:
+      - "uvicorn"
+      - "api.main:app"
+      - "--host=0.0.0.0"
+      - "--port=8000"
+    restart: unless-stopped
+
+# ----------------------------------------------------------
+# Volume persistant (compatible Docker et Podman)
+# ----------------------------------------------------------
+volumes:
+  minio_data:
+    name: maintenance_minio_data

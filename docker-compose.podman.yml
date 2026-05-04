@@ -1,0 +1,32 @@
+# ============================================================
+# docker-compose.podman.yml — OVERRIDE pour Podman / Fedora
+# ============================================================
+#
+# À utiliser SEULEMENT avec Podman, en complément du fichier principal :
+#
+#   podman-compose -f docker-compose.yml -f docker-compose.podman.yml up -d
+#
+# Apporte 2 ajustements :
+#   1. ":Z" sur les bind mounts → relabel SELinux automatique
+#   2. "userns_mode: keep-id" → mapping correct UID/GID en rootless
+# ============================================================
+
+services:
+
+  training:
+    userns_mode: "keep-id"
+    volumes:
+      - ./data:/app/data:z
+      - ./models:/app/models:z
+      - ./results:/app/results:z
+
+  dashboard:
+    userns_mode: "keep-id"
+    volumes:
+      - ./models:/app/models:ro,z
+      - ./results:/app/results:ro,z
+
+  api:
+    userns_mode: "keep-id"
+    volumes:
+      - ./models:/app/models:ro,z
