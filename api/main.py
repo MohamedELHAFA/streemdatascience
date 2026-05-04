@@ -698,11 +698,11 @@ def simulate_machine(
         }[scenario],
         "noise_applied": add_noise,
         "sensor_data":   data,
-        "ready_to_post": f"Utilisez ces données dans POST /predict",
+        "ready_to_post": "Utilisez ces données dans POST /predict",
         "curl_example": (
-            f"curl -X POST http://localhost:8000/predict "
-            f'-H "Content-Type: application/json" '
-            f"-d '{str(data).replace(\"'\", '\"')}'"
+            "curl -X POST http://localhost:8000/predict "
+            '-H "Content-Type: application/json" '
+            "-d '" + str(data).replace("'", '"') + "'"
         ),
     }
 

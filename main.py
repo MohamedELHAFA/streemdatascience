@@ -48,6 +48,10 @@ MODELS_DIR.mkdir(parents=True, exist_ok=True)
 RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 (ROOT / "data" / "raw").mkdir(parents=True, exist_ok=True)
 
+# ─── MinIO — connexion automatique ────────────────────────────────────────────
+# Instancié une seule fois au démarrage ; toutes les fonctions l'utilisent.
+MINIO = MinIOClient()
+
 
 # ─── Pipeline complet pour un modèle ─────────────────────────────────────────
 
@@ -68,7 +72,9 @@ def run_logistic(X_train, X_test, y_train, y_test, preprocessor,
     print("\n── Interprétabilité (coefficients) ──")
     model_logistic.get_feature_importance(pipeline)
 
-    model_logistic.save_model(pipeline, MODELS_DIR / "logistic_regression.pkl")
+    model_path = MODELS_DIR / "logistic_regression.pkl"
+    model_logistic.save_model(pipeline, model_path)
+    MINIO.upload_model(model_path, model_path.name)
 
     return metrics
 
@@ -91,7 +97,9 @@ def run_random_forest(X_train, X_test, y_train, y_test, preprocessor,
     print("\n── Interprétabilité (feature importance Gini) ──")
     model_random_forest.get_feature_importance(pipeline)
 
-    model_random_forest.save_model(pipeline, MODELS_DIR / "random_forest.pkl")
+    model_path = MODELS_DIR / "random_forest.pkl"
+    model_random_forest.save_model(pipeline, model_path)
+    MINIO.upload_model(model_path, model_path.name)
 
     return metrics
 
@@ -114,7 +122,9 @@ def run_xgboost(X_train, X_test, y_train, y_test, preprocessor,
     print("\n── Interprétabilité (feature importance gain) ──")
     model_xgboost.get_feature_importance(pipeline)
 
-    model_xgboost.save_model(pipeline, MODELS_DIR / "xgboost.pkl")
+    model_path = MODELS_DIR / "xgboost.pkl"
+    model_xgboost.save_model(pipeline, model_path)
+    MINIO.upload_model(model_path, model_path.name)
 
     return metrics
 
@@ -142,7 +152,9 @@ def run_mlp(X_train, X_test, y_train, y_test, preprocessor,
     metrics = model_mlp.evaluate(pipeline, X_test, y_test,
                                  results_dir=RESULTS_DIR)
 
-    model_mlp.save_model(pipeline, MODELS_DIR / "mlp.pkl")
+    model_path = MODELS_DIR / "mlp.pkl"
+    model_mlp.save_model(pipeline, model_path)
+    MINIO.upload_model(model_path, model_path.name)
 
     return metrics
 
@@ -182,16 +194,8 @@ def main():
         help="Chemin vers le CSV"
     )
     parser.add_argument(
-        "--from-minio", action="store_true",
-        help="Charger le dataset depuis MinIO (critère RNCP C3)"
-    )
-    parser.add_argument(
         "--shap", action="store_true",
         help="Générer les graphiques SHAP après entraînement"
-    )
-    parser.add_argument(
-        "--upload-minio", action="store_true",
-        help="Uploader modèles et résultats vers MinIO après entraînement"
     )
     args = parser.parse_args()
 
@@ -200,25 +204,26 @@ def main():
     print("=" * 60)
     print("  MAINTENANCE PRÉDICTIVE — MODÉLISATION")
     print("=" * 60)
+    minio_status = f"Connecté ({MINIO.bucket})" if MINIO._connected else "Non connecté (mode local)"
     print(f"  Modèle(s)    : {args.model}")
     print(f"  Optimisation : {'Oui' if args.optimize else 'Non'}")
     print(f"  Cross-val    : {'Oui' if run_cv else 'Non'}")
     print(f"  Données      : {args.data}")
+    print(f"  MinIO        : {minio_status}")
 
     # ── Chargement & split ──
     data_path = args.data
 
-    if args.from_minio:
-        print("\n[MinIO] Tentative de chargement depuis MinIO...")
-        minio = MinIOClient()
-        df_minio = minio.load_dataset_to_df(local_fallback=data_path)
+    # Chargement automatique depuis MinIO si disponible
+    if MINIO._connected:
+        print("\n[MinIO] Chargement du dataset depuis MinIO...")
+        df_minio = MINIO.load_dataset_to_df(local_fallback=data_path)
         if df_minio is not None:
-            # Sauvegarder localement pour load_and_split
             Path(data_path).parent.mkdir(parents=True, exist_ok=True)
             df_minio.to_csv(data_path, index=False)
-            print(f"[MinIO] Dataset sauvegardé localement : {data_path}")
-        else:
-            print("[MinIO] Échec MinIO — utilisation fichier local.")
+            print(f"[MinIO] Dataset syncé localement : {data_path}")
+    else:
+        print("[MinIO] Non connecté — utilisation fichier local.")
 
     X_train, X_test, y_train, y_test, preprocessor = load_and_split(data_path)
 
@@ -288,17 +293,14 @@ def main():
                             "--model", str(MODELS_DIR / "xgboost.pkl"),
                             "--data", str(data_path)], check=False)
 
-    # ── Upload MinIO ──
-    if args.upload_minio:
+    # ── Sync final vers MinIO (automatique si connecté) ──
+    if MINIO._connected:
         print("\n" + "=" * 60)
-        print("  UPLOAD MINIO — CLOUD DATA MANAGEMENT")
+        print("  SYNC MINIO — CLOUD DATA MANAGEMENT")
         print("=" * 60)
-        minio = MinIOClient()
-        minio.upload_dataset(data_path)
-        minio.upload_all_models(MODELS_DIR)
-        minio.upload_results(RESULTS_DIR)
-        print("[MinIO] Upload complet.")
-        print(json.dumps(minio.status(), indent=2))
+        MINIO.upload_results(RESULTS_DIR)
+        print("[MinIO] Sync complet.")
+        print(json.dumps(MINIO.status(), indent=2))
 
 
 if __name__ == "__main__":
