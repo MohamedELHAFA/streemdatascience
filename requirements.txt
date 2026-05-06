@@ -37,3 +37,7 @@ ipywidgets
 
 # ─── HTTP client (dashboard → API) ────────────────────────────────────────────
 requests>=2.31
+
+# ─── Configuration & Sécurité ────────────────────────────────────────────
+pyyaml>=6.0
+argon2-cffi>=23.1.0

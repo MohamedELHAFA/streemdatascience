@@ -11,19 +11,24 @@ import os, sys, time
 from pathlib import Path
 from datetime import datetime, timedelta
 
-ROOT = Path(__file__).resolve().parent.parent
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
-
+import yaml
 import joblib
 import warnings
 import requests
 import numpy as np
 import pandas as pd
+from argon2 import PasswordHasher
+from argon2.exceptions import VerifyMismatchError
 import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import streamlit as st
+
+ROOT = Path(__file__).resolve().parent.parent
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+
 
 warnings.filterwarnings("ignore")
 
@@ -267,6 +272,86 @@ def load_metrics():
     return pd.read_csv(p)
 
 
+@st.cache_resource(show_spinner=False)
+def load_auth_config():
+    """Charge la configuration d'authentification depuis config/auth.yaml"""
+    config_path = ROOT / "config" / "auth.yaml"
+    if not config_path.exists():
+        st.error(f"❌ Fichier de configuration manquant : {config_path}")
+        st.stop()
+    
+    try:
+        with open(config_path, 'r', encoding='utf-8') as f:
+            config = yaml.safe_load(f)
+        return config
+    except Exception as e:
+        st.error(f"❌ Erreur chargement config : {e}")
+        st.stop()
+
+
+AUTH_CONFIG = load_auth_config()
+ROLES = AUTH_CONFIG.get("roles", {})
+AUTH_USERS = AUTH_CONFIG.get("users", {})
+ROLE_LABELS = {role_key: role_info.get("label", role_key) for role_key, role_info in ROLES.items()}
+ROLE_DATA_SCIENCE = "data_science"
+ROLE_ENGINEER = "engineer"
+
+
+def initialize_auth_state():
+    st.session_state.setdefault("authenticated", False)
+    st.session_state.setdefault("username", "")
+    st.session_state.setdefault("role", ROLE_ENGINEER)
+
+
+def authenticate(username: str, password: str) -> tuple[bool, str | None]:
+    user = AUTH_USERS.get(username.strip().lower())
+    if not user:
+        return False, None
+    
+    password_hash = user.get("password_hash")
+    if not password_hash:
+        return False, None
+    
+    try:
+        ph = PasswordHasher()
+        ph.verify(password_hash, password)
+        return True, user.get("role", ROLE_ENGINEER)
+    except VerifyMismatchError:
+        return False, None
+    except Exception:
+        return False, None
+
+
+def show_login_page():
+    st.markdown("<h1>🔐 Authentification Dashboard</h1>", unsafe_allow_html=True)
+    st.markdown(
+        '<p style="color:#8b949e">Connectez-vous pour accéder au tableau de bord PredictMaint Pro.</p>',
+        unsafe_allow_html=True,
+    )
+    with st.form("login_form"):
+        username = st.text_input("Nom d'utilisateur", value=st.session_state.get("username", ""))
+        password = st.text_input("Mot de passe", type="password")
+        submit = st.form_submit_button("Se connecter")
+        if submit:
+            ok, role = authenticate(username, password)
+            if ok:
+                st.session_state.authenticated = True
+                st.session_state.username = username.strip().lower()
+                st.session_state.role = role
+                st.rerun()
+            else:
+                st.error("Identifiant ou mot de passe incorrect.")
+
+    st.markdown("---")
+    st.markdown("**Profils disponibles :**")
+    for username, user_info in AUTH_USERS.items():
+        role_key = user_info.get("role", ROLE_ENGINEER)
+        role_info = ROLES.get(role_key, {})
+        description = role_info.get("description", "")
+        st.markdown(f"- `{username}` — {description}")
+    st.stop()
+
+
 def health_score(vals):
     def norm(v, lo, hi): return max(0., min(1., (v - lo) / (hi - lo + 1e-9)))
     v = norm(vals.get("vibration_rms",    2.5), 0.5,  6.0)
@@ -327,6 +412,10 @@ def kpi(label, value, delta_html="", accent="#58a6ff"):
     )
 
 
+initialize_auth_state()
+if not st.session_state.authenticated:
+    show_login_page()
+
 # ──────────────────────────────────────────────────────────────────────────────
 # SIDEBAR
 # ──────────────────────────────────────────────────────────────────────────────
@@ -342,18 +431,47 @@ with st.sidebar:
     )
     st.divider()
 
+    st.markdown(
+        f'''<div style="padding:12px;margin-bottom:12px;border:1px solid #30363d;border-radius:10px;">
+          <b>Utilisateur</b> : {st.session_state.username}<br>
+          <b>Profil</b> : {ROLE_LABELS.get(st.session_state.role, "—")}
+        </div>''',
+        unsafe_allow_html=True,
+    )
+    if st.button("🔓 Se déconnecter"):
+        st.session_state.authenticated = False
+        st.session_state.username = ""
+        st.session_state.role = ROLE_ENGINEER
+        st.rerun()
+
+    common_pages = [
+        "🏠  Vue d'ensemble",
+        "🚨  Alertes en temps réel",
+        "⚙️  Simulateur Machine",
+        "📊  Analyse EDA",
+    ]
+    data_pages = common_pages + [
+        "🤖  Modèles & Performances",
+        "🔍  Explicabilité IA",
+        "💼  Use Cases Métier",
+    ]
+    page_options = data_pages if st.session_state.role == ROLE_DATA_SCIENCE else common_pages
+
     page = st.radio(
         "Navigation",
-        options=[
-            "🏠  Vue d'ensemble",
-            "🚨  Alertes en temps réel",
-            "🤖  Modèles & Performances",
-            "⚙️  Simulateur Machine",
-            "📊  Analyse EDA",
-            "🔍  Explicabilité IA",
-            "💼  Use Cases Métier",
-        ],
+        options=page_options,
         label_visibility="collapsed",
+    )
+    st.divider()
+
+    if st.session_state.role == ROLE_ENGINEER:
+        st.markdown(
+            '<div class="alert-medium">Accès ingénieur : pages modèles et explicabilité masquées.</div>',
+            unsafe_allow_html=True,
+        )
+    st.markdown(
+        f'<div style="color:#484f58;font-size:.72rem;text-align:center">{datetime.now().strftime("%d/%m/%Y %H:%M")}</div>',
+        unsafe_allow_html=True,
     )
     st.divider()
 
@@ -830,7 +948,15 @@ elif page == "⚙️  Simulateur Machine":
         pressure_level = st.slider("Pression (bar)", 2.0, 12.0, float(sc_vals["pressure_level"]) if sc_vals else 6.0, step=0.1)
         operating_mode = st.selectbox("Mode opératoire", ["normal","high_load","peak"],
                                        index=["normal","high_load","peak"].index(sc_vals["operating_mode"]) if sc_vals else 0)
-        selected_model = st.selectbox("Modèle ML", list(models.keys()), format_func=lambda k: MODEL_LABELS.get(k,k))
+        if st.session_state.role == ROLE_ENGINEER:
+            selected_model = list(models.keys())[0]
+            st.markdown(
+                f'''<div style="margin-top:14px; padding:10px; border:1px solid #30363d; border-radius:10px; background:rgba(255,255,255,0.03);">
+                <b>Modèle par défaut :</b> {MODEL_LABELS.get(selected_model, selected_model)}</div>''',
+                unsafe_allow_html=True,
+            )
+        else:
+            selected_model = st.selectbox("Modèle ML", list(models.keys()), format_func=lambda k: MODEL_LABELS.get(k, k))
 
     input_vals = dict(vibration_rms=vibration_rms, temperature_motor=temperature_motor,
                       current_phase_avg=current_phase_avg, pressure_level=pressure_level,
