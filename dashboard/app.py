@@ -7,7 +7,7 @@ Lancement :
     streamlit run dashboard/app.py
 """
 
-import sys, time
+import os, sys, time
 from pathlib import Path
 from datetime import datetime, timedelta
 
@@ -17,6 +17,7 @@ if str(ROOT) not in sys.path:
 
 import joblib
 import warnings
+import requests
 import numpy as np
 import pandas as pd
 import plotly.express as px
@@ -52,6 +53,89 @@ MODEL_LABELS = {
     "xgboost":             "XGBoost",
     "mlp":                 "MLP Deep Learning",
 }
+
+# ──────────────────────────────────────────────────────────────────────────────
+# CONFIGURATION API — Architecture Front / API / Modèle (cf. sujet p.15)
+# ──────────────────────────────────────────────────────────────────────────────
+# Le dashboard fonctionne en deux modes contrôlés par variables d'environnement :
+#   - USE_API=false (défaut) : prédiction locale via joblib.load (mode dev rapide)
+#   - USE_API=true           : prédiction via POST /predict de l'API REST
+# En Docker, API_URL=http://api:8000 (nom de service du compose).
+# En local, API_URL=http://localhost:8000.
+USE_API     = os.getenv("USE_API", "false").lower() == "true"
+API_URL     = os.getenv("API_URL", "http://localhost:8000")
+API_TIMEOUT = 5  # secondes — court pour ne pas bloquer le dashboard
+
+
+@st.cache_data(ttl=10, show_spinner=False)
+def api_is_alive() -> bool:
+    """
+    Health check de l'API. Cache 10s pour éviter de spammer /health
+    à chaque rerender Streamlit. Renvoie True si l'API répond ET a un modèle chargé.
+    """
+    try:
+        r = requests.get(f"{API_URL}/health", timeout=2)
+        return r.status_code == 200 and r.json().get("model_loaded", False)
+    except Exception:
+        return False
+
+
+def predict_via_api(vals: dict, model_name: str | None = None) -> dict | None:
+    """
+    Appelle POST /predict de l'API REST.
+
+    Args:
+        vals       : dict avec les capteurs bruts (mêmes clés que SensorInput côté API)
+        model_name : nom du modèle ('xgboost', 'random_forest', etc.) ou None = défaut API
+
+    Returns:
+        dict JSON complet de l'API (probability_failure, risk_level, health_score, ...)
+        ou None si l'API est injoignable / erreur.
+    """
+    payload = {
+        "vibration_rms":           float(vals["vibration_rms"]),
+        "temperature_motor":       float(vals["temperature_motor"]),
+        "current_phase_avg":       float(vals["current_phase_avg"]),
+        "pressure_level":          float(vals["pressure_level"]),
+        "rpm":                     float(vals["rpm"]),
+        "hours_since_maintenance": float(vals["hours_since_maintenance"]),
+        "ambient_temp":            float(vals.get("ambient_temp", 22.0)),
+        "operating_mode":          str(vals["operating_mode"]),
+    }
+    if model_name:
+        payload["model_name"] = model_name
+
+    try:
+        r = requests.post(f"{API_URL}/predict", json=payload, timeout=API_TIMEOUT)
+        r.raise_for_status()
+        return r.json()
+    except requests.exceptions.RequestException as e:
+        st.warning(f"⚠️ API injoignable ({type(e).__name__}) — fallback modèle local.")
+        return None
+
+
+def predict_proba(vals: dict, models: dict, model_key: str) -> float:
+    """
+    Wrapper d'inférence — point d'entrée unique du dashboard.
+
+    Routage :
+      - USE_API=true ET API up   → POST /predict
+      - USE_API=true ET API down → fallback silencieux sur modèle local
+      - USE_API=false            → modèle local directement (comportement initial)
+
+    Garantit que l'UI ne crash JAMAIS si l'API tombe : un dashboard production-ready
+    doit dégrader gracieusement. Renvoie toujours une probabilité de panne ∈ [0, 1].
+    """
+    if USE_API:
+        result = predict_via_api(vals, model_name=model_key)
+        if result is not None:
+            return float(result["probability_failure"])
+        # fallback silencieux
+
+    # Mode local — comportement historique
+    X = build_X(vals)
+    return float(models[model_key].predict_proba(X)[0, 1])
+
 
 # ──────────────────────────────────────────────────────────────────────────────
 # THÈME CSS — DARK INDUSTRIAL
@@ -299,6 +383,34 @@ with st.sidebar:
             f'<span style="color:#8b949e;font-size:.78rem">{label}</span></div>',
             unsafe_allow_html=True,
         )
+
+    # ── Indicateur du mode d'inférence (Front / API / Modèle) ────────────────
+    if USE_API:
+        api_ok = api_is_alive()
+        mode_color = "#3fb950" if api_ok else "#d29922"
+        mode_icon  = "🟢" if api_ok else "🟡"
+        mode_label = (
+            f"<b>API REST</b> · {mode_icon} active<br>"
+            f"<span style='color:#8b949e;font-size:.7rem'>{API_URL}</span>"
+            if api_ok else
+            f"<b>API REST</b> · {mode_icon} indisponible<br>"
+            f"<span style='color:#8b949e;font-size:.7rem'>fallback local actif</span>"
+        )
+    else:
+        mode_color = "#58a6ff"
+        mode_label = (
+            "<b>Mode local</b> · 🔵 modèles en mémoire<br>"
+            "<span style='color:#8b949e;font-size:.7rem'>USE_API=true pour activer l'API</span>"
+        )
+
+    st.markdown(
+        f'<div style="margin-top:14px;padding:10px 12px;'
+        f'border-left:3px solid {mode_color};background:rgba(255,255,255,0.02);'
+        f'border-radius:4px;font-size:.78rem;color:#c9d1d9;line-height:1.4">'
+        f'{mode_label}</div>',
+        unsafe_allow_html=True,
+    )
+
     st.divider()
     st.markdown(
         f'<div style="color:#484f58;font-size:.72rem;text-align:center">'
@@ -724,10 +836,9 @@ elif page == "⚙️  Simulateur Machine":
                       current_phase_avg=current_phase_avg, pressure_level=pressure_level,
                       rpm=rpm, hours_since_maintenance=hours_since_maintenance,
                       ambient_temp=ambient_temp, operating_mode=operating_mode)
-    X_pred = build_X(input_vals)
 
     try:
-        proba = float(models[selected_model].predict_proba(X_pred)[0, 1])
+        proba = predict_proba(input_vals, models, selected_model)
     except Exception as e:
         st.error(f"Erreur prédiction : {e}")
         st.stop()
@@ -1063,12 +1174,11 @@ python main.py --shap
             if models:
                 sel_loc = st.selectbox("Modèle", list(models.keys()),
                                         format_func=lambda k: MODEL_LABELS.get(k,k), key="sel_loc")
-                X_loc = build_X({f: float(row_d.get(f, 0)) for f in FEATURES_NUM} | {
-                    "ambient_temp": float(row_d.get("ambient_temp", 22.)),
-                    "operating_mode": str(row_d.get("operating_mode","normal")),
-                })
+                loc_vals = {f: float(row_d.get(f, 0)) for f in FEATURES_NUM}
+                loc_vals["ambient_temp"]   = float(row_d.get("ambient_temp", 22.))
+                loc_vals["operating_mode"] = str(row_d.get("operating_mode", "normal"))
                 try:
-                    p_loc = float(models[sel_loc].predict_proba(X_loc)[0,1])
+                    p_loc = predict_proba(loc_vals, models, sel_loc)
                     rl_loc, rc_loc, rb_loc = risk_label(p_loc)
                     st.metric("Probabilité prédite", f"{p_loc*100:.1f}%")
                     st.markdown(f'<span class="badge {rb_loc}">{rl_loc}</span>', unsafe_allow_html=True)

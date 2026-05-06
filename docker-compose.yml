@@ -65,6 +65,7 @@ services:
       MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD}
       MINIO_BUCKET: ${MINIO_BUCKET}
       MINIO_SECURE: "false"
+      MPLCONFIGDIR: "/tmp/mpl"
     volumes:
       - ./data:/app/data
       - ./models:/app/models
@@ -82,6 +83,7 @@ services:
     depends_on:
       - minio
       - createbuckets
+      - api
     ports:
       - "8501:8501"
     environment:
@@ -90,7 +92,13 @@ services:
       MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD}
       MINIO_BUCKET: ${MINIO_BUCKET}
       MINIO_SECURE: "false"
+      # ── Architecture Front / API / Modèle (sujet p.15) ──
+      USE_API: "true"
+      API_URL: "http://api:8000"
+      # ── Évite les warnings matplotlib en mode rootless ──
+      MPLCONFIGDIR: "/tmp/mpl"
     volumes:
+      - ./data:/app/data:ro
       - ./models:/app/models:ro
       - ./results:/app/results:ro
     command:
@@ -120,7 +128,9 @@ services:
       MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD}
       MINIO_BUCKET: ${MINIO_BUCKET}
       MINIO_SECURE: "false"
+      MPLCONFIGDIR: "/tmp/mpl"
     volumes:
+      - ./data:/app/data:ro
       - ./models:/app/models:ro
     command:
       - "uvicorn"
