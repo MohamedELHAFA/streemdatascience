@@ -7,7 +7,7 @@ Lancement :
     streamlit run dashboard/app.py
 """
 
-import os, sys, time
+import os, sys, time, threading
 from pathlib import Path
 from datetime import datetime, timedelta
 
@@ -27,6 +27,20 @@ import streamlit as st
 ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
+
+# ── Lancement automatique du serveur FastAPI en arrière-plan ─────────────────
+def _start_api_server():
+    """Lance uvicorn dans un thread daemon — ne bloque pas Streamlit."""
+    try:
+        import uvicorn
+        uvicorn.run("api.main:app", host="0.0.0.0", port=8000, log_level="warning")
+    except Exception as e:
+        print(f"[API] Impossible de démarrer : {e}")
+
+_api_thread = threading.Thread(target=_start_api_server, daemon=True, name="api-server")
+if not any(t.name == "api-server" for t in threading.enumerate()):
+    _api_thread.start()
+    time.sleep(2)  # laisser uvicorn s'initialiser
 
 
 
@@ -67,7 +81,7 @@ MODEL_LABELS = {
 #   - USE_API=true           : prédiction via POST /predict de l'API REST
 # En Docker, API_URL=http://api:8000 (nom de service du compose).
 # En local, API_URL=http://localhost:8000.
-USE_API     = os.getenv("USE_API", "false").lower() == "true"
+USE_API     = os.getenv("USE_API", "true").lower() == "true"
 API_URL     = os.getenv("API_URL", "http://localhost:8000")
 API_TIMEOUT = 5  # secondes — court pour ne pas bloquer le dashboard
 
