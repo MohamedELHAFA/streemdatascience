@@ -1,26 +1,16 @@
-# ── Data ────────────────────────────────────────────
-data/raw/
+# ── Data (on garde raw/ pour Streamlit Cloud) ────────
 data/processed/
 data/splits/
-*.csv
 *.parquet
 *.feather
-*.h5
-*.hdf5
 
-# ── Models ──────────────────────────────────────────
-models/
-*.pkl
-*.joblib
+# ── Notebooks output ─────────────────────────────────
+*.png
+
+# ── Formats binaires lourds (hors pkl ML) ────────────
 *.pt
 *.pth
 *.onnx
-*.h5
-
-results/
-*.png
-.json
-.csv
 
 # ── Python virtual environment ───────────────────────
 venv/

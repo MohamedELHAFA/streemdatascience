@@ -918,6 +918,7 @@ elif page == "⚙️  Simulateur Machine":
         st.markdown('<div class="alert-high">⚠️ Aucun modèle disponible. Lancez <code>python main.py</code> puis rechargez.</div>', unsafe_allow_html=True)
         st.stop()
 
+    # Valeurs statiques (fallback si API indisponible)
     scenarios = {
         "🟢  Machine en bon état":   dict(vibration_rms=1.8, temperature_motor=68, current_phase_avg=15, pressure_level=5.8, rpm=1600, hours_since_maintenance=45,  ambient_temp=22, operating_mode="normal"),
         "🟡  Usure modérée":          dict(vibration_rms=3.2, temperature_motor=85, current_phase_avg=21, pressure_level=7.2, rpm=2100, hours_since_maintenance=210, ambient_temp=26, operating_mode="high_load"),
@@ -925,10 +926,49 @@ elif page == "⚙️  Simulateur Machine":
         "⚡  Surcharge thermique":     dict(vibration_rms=2.1, temperature_motor=128,current_phase_avg=35, pressure_level=6.1, rpm=1800, hours_since_maintenance=120, ambient_temp=42, operating_mode="peak"),
         "🔧  Déséquilibre mécanique": dict(vibration_rms=6.5, temperature_motor=78, current_phase_avg=19, pressure_level=5.9, rpm=2400, hours_since_maintenance=95,  ambient_temp=23, operating_mode="normal"),
     }
+    # Correspondance emoji label → nom de scénario API (GET /machines/simulate?scenario=...)
+    SC_API_MAP = {
+        "🟢  Machine en bon état":   "normal",
+        "🟡  Usure modérée":          "usure",
+        "🔴  Panne imminente":        "critique",
+        "⚡  Surcharge thermique":     "surchauffe",
+        "🔧  Déséquilibre mécanique": "desequilibre",
+    }
 
     st.markdown('<div class="section-title">Scénarios prédéfinis</div>', unsafe_allow_html=True)
     selected_sc = st.selectbox("Charger un scénario :", ["— Personnalisé —"] + list(scenarios.keys()))
-    sc_vals = scenarios.get(selected_sc)
+
+    sc_vals = None
+    _sc_source = "local"
+    if selected_sc != "— Personnalisé —":
+        api_sc_name = SC_API_MAP.get(selected_sc)
+        if api_sc_name and api_is_alive():
+            try:
+                _resp = requests.get(
+                    f"{API_URL}/machines/simulate",
+                    params={"scenario": api_sc_name, "add_noise": "true"},
+                    timeout=API_TIMEOUT,
+                )
+                if _resp.status_code == 200:
+                    sc_vals   = _resp.json()["sensor_data"]
+                    _sc_source = "api"
+            except Exception:
+                pass
+        if sc_vals is None:
+            sc_vals = scenarios.get(selected_sc)
+
+    # Badge source des données
+    if selected_sc != "— Personnalisé —":
+        if _sc_source == "api":
+            st.markdown(
+                '<span style="background:#1f6f3a;color:#3fb950;padding:2px 10px;border-radius:12px;font-size:.75rem;">🔗 Données chargées via API + bruit aléatoire</span>',
+                unsafe_allow_html=True,
+            )
+        else:
+            st.markdown(
+                '<span style="background:#3a2a00;color:#d29922;padding:2px 10px;border-radius:12px;font-size:.75rem;">📂 Données statiques (API non disponible)</span>',
+                unsafe_allow_html=True,
+            )
 
     st.divider()
     col1, col2, col3 = st.columns(3)

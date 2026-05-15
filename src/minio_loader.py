@@ -30,6 +30,7 @@ from pathlib import Path
 from typing import Optional
 
 import pandas as pd
+import urllib3
 
 # MinIO est optionnel — le module fonctionne en mode dégradé si absent
 try:
@@ -76,11 +77,16 @@ class MinIOClient:
             return
 
         try:
+            _http = urllib3.PoolManager(
+                timeout=urllib3.Timeout(connect=3, read=5),
+                retries=urllib3.Retry(total=1, backoff_factor=0),
+            )
             self._client = Minio(
                 endpoint=endpoint,
                 access_key=access_key,
                 secret_key=secret_key,
                 secure=secure,
+                http_client=_http,
             )
             # Test de connexion : lister les buckets
             self._client.list_buckets()
